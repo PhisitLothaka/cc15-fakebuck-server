@@ -2,6 +2,20 @@ const fs = require("fs/promises");
 const createError = require("../utils/create-error");
 const { upload } = require("../utils/cloudinary-service");
 const prisma = require("../models/prisma");
+const { STATUS_ACCEPTED } = require("../config/constants");
+
+const getFriendIds = async (targetUserId) => {
+  const relationship = await prisma.friend.findMany({
+    where: {
+      OR: [{ receiverId: targetUserId }, { requesterId: targetUserId }],
+      status: STATUS_ACCEPTED,
+    },
+  });
+  const friendIds = relationship.map((el) =>
+    el.requesterId === targetUserId ? el.receiverId : el.requesterId
+  );
+  return friendIds;
+};
 
 exports.createPost = async (req, res, next) => {
   try {
@@ -17,15 +31,65 @@ exports.createPost = async (req, res, next) => {
       data.message = message;
     }
 
-    await prisma.post.create({
+    const post = await prisma.post.create({
       data: data,
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profileInage: true,
+          },
+        },
+        likes: {
+          select: {
+            userId: true,
+          },
+        },
+      },
     });
-    res.status(201).json({ message: "post created" });
+
+    res.status(201).json({ message: "post created", post });
   } catch (err) {
     next(err);
   } finally {
     if (req.file) {
       fs.unlink(req.file.path);
     }
+  }
+};
+
+exports.getAllPostIncludeFriendPost = async (req, res, next) => {
+  try {
+    const friendIds = await getFriendIds(req.user.id);
+    const posts = await prisma.post.findMany({
+      where: {
+        userId: {
+          in: [...friendIds, req.user.id],
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            profileInage: true,
+          },
+        },
+        likes: {
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+    res.status(200).json({ posts });
+  } catch (err) {
+    next(err);
   }
 };
